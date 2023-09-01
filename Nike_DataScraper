@@ -1,0 +1,166 @@
+!apt-get update
+!apt install -y firefox-geckodriver
+!pip install selenium
+
+# Most simple library to scrape. Easily detectable
+from bs4 import BeautifulSoup
+import requests
+
+# More advanced scraping library. Used when a website requires a "click" or "scroll". In this, we use it to scroll down to the bottom of the page continuously
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException
+
+# Adds wait times to reduce bot detection
+import time
+
+# Random number generator, headless option, action chains, error handling
+import re
+import random
+from selenium.webdriver.firefox.options import Options
+from selenium.webdriver.common.action_chains import ActionChains
+from selenium.common.exceptions import NoSuchElementException
+
+# To put information into json format after collected
+import json
+
+
+# URL to scrape
+url = "https://www.nike.com/w/shoes-y7ok"
+
+# Set up the Selenium WebDriver
+options = Options()
+options.headless = True
+
+# Add a user agent
+user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.82 Safari/537.36"
+options.add_argument(f'user-agent={user_agent}')
+
+# Initialize the WebDriver
+driver = webdriver.Firefox(options=options)
+driver.get(url)
+
+
+# Scroll down every 5 seconds for 2 minutes
+end_time = time.time() + 2 * 15  # 2 minutes from now /////CHANGED TO 10 WAS 60
+while time.time() < end_time:
+    driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+    time.sleep(5)
+
+# Now that the page is fully scrolled, parse the data
+
+try:
+    # Find all links to different shoe types on the homepage
+    shoe_links = driver.find_elements(By.CSS_SELECTOR, ".product-card__link-overlay")
+
+    # Store shoe URLs in a list
+    shoe_urls = [link.get_attribute('href') for link in shoe_links]
+
+    # You can store the results in a dictionary
+    results = {}
+
+    # Counter for shoe URLs
+    count = 0
+
+    #for json
+    final = []
+
+    # Loop through each shoe URL
+    for shoe_url in shoe_urls:
+        # Break the loop if 50 URLs have been processed
+        if count >= 50:
+            break
+
+        driver.get(shoe_url)
+        time.sleep(2)
+
+        colorways = driver.find_elements(By.CSS_SELECTOR, ".colorway-container")
+        num_colorways = len(colorways)  # Store the number of colorways
+
+        for i in range(num_colorways):  # Here I changed the loop to use index instead of elements directly.
+            driver.get(shoe_url)  # Go to the shoe page
+            time.sleep(2)  # Wait for the page to load
+            colorways = driver.find_elements(By.CSS_SELECTOR, ".colorway-container")  # Fetch colorways again
+            # Safely access the colorway
+            try:
+                colorway = colorways[i]
+            except IndexError:
+                print("Colorway index out of range.")
+                continue  # Skip this iteration and continue with the next one
+            # Click on colorway
+            colorway.click()
+            time.sleep(2)  # Waiting for the images to load
+
+            # Waiting for the shoe page to load
+            wait = WebDriverWait(driver, 10)
+
+            # Find title
+            try:
+                print("Finding title...")
+                title_element = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "h1[data-test='product-title']")))
+                title = title_element.get_attribute('innerHTML')
+                print(f"Title found: {title}")
+            except TimeoutException:
+                title = "N/A"
+                print("Title not found.")
+
+            # Find price
+            try:
+                print("Finding price...")
+                try:
+                    price_element = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div[data-test='product-price']")))
+                    price_html = price_element.get_attribute('innerHTML')
+                    soup = BeautifulSoup(price_html, 'html.parser')
+
+                    # Find and remove the span tag
+                    span = soup.find('span', {'class': 'visually-hidden'})
+                    if span:
+                        span.decompose()
+
+                    # The remaining text is your price
+                    price = soup.text.strip()
+
+                    print(f"Price found: {price}")
+                except TimeoutException:
+                    print("Standard price not found, checking for reduced price...")
+                    price_element = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div[data-test='product-price-reduced']")))
+                    price = price_element.get_attribute('innerHTML')
+                    print(f"Reduced price found: {price}")
+            except TimeoutException:
+                price = "N/A"
+                print("Price not found.")
+
+            # Find images
+            print("Finding images...")
+            images = driver.find_elements(By.CSS_SELECTOR, "img[data-testid='HeroImg']")
+            img_urls = [img.get_attribute('src') for img in images]
+            if img_urls:
+                print(f"Found {len(img_urls)} images.")
+                for image in img_urls:
+                  print(image)
+            else:
+                print("No images found.")
+
+            data = {
+                "title": title,
+                "price": price,
+                "images": img_urls
+            }
+
+            final.append(data)
+
+        # Increment the counter
+      #count += 1
+
+except Exception as e:
+    print(f"Exception occurred: {e}")
+    # Re-initialize the WebDriver
+    driver = webdriver.Firefox(options=options)
+    driver.get(url)
+
+with open('shoe_data.json', 'w') as f:
+    json.dump(final, f)
+
+driver.quit()
